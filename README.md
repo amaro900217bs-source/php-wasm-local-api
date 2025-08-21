@@ -1,7 +1,7 @@
 # 📄 php-wasm-local-api – Documentation
 
 ## 🔎 Overview
-`php-wasm-local-api` is a small library that allows executing **PHP directly in the browser** using **WebAssembly (WASM)** and **Web Workers**.
+`php-wasm-local-api` is a small TESTING library that aims to allow executing **PHP REST-Like APIs directly in the browser** using **WebAssembly (WASM)** and **Web Workers**.
 
 It provides:
 - A **worker pool** for concurrent PHP execution.
