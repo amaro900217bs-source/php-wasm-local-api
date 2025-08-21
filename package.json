@@ -1,0 +1,15 @@
+{
+  "name": "php-wasm-api-webworker",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "npx serve .",
+    "build": "parcel build wasm_module.js --no-source-maps"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "php-wasm": "^0.0.8"
+  },
+  "devDependencies": {
+    "parcel": "^2.9.0"
+  }
+}

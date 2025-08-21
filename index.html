@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PHP WASM Web Worker Demo</title>
+<script>
+  window.DEBUG = true;
+  window.ENTRY_POINT = "";
+  window.DOC_ROOT = "/www";
+  window.NUM_WORKERS = 2;
+  window.WARM_UP_SCRIPT = `<?php
+    echo "PHP WASM Worker inicializado\n";
+    $test = "warmup";
+    echo "String: $test, Length: " . strlen($test) . "\n";
+    $result = sqrt(16) + pow(2, 3);
+    echo "Math test: $result\n";
+    $arr = range(1, 5);
+    echo "Array: " . implode(', ', $arr) . "\n";
+    echo "✅ Warm-up completado\n";
+  ?>`;
+</script>
+<script type="module" src="./wasm_module.js" defer></script>
+
+  <style>
+    /* Tema oscuro general */
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #121212;
+      color: #eee;
+      font-size: 0.75rem;
+      line-height: 1.5;
+      padding: 1rem;
+      min-height: 150vh;
+    }
+    input, button { font-size: 0.85rem; }
+    input { max-width: 80vw; }
+    h1, h3 { margin: 0.6rem 0; }
+    .container { margin-bottom: 1rem; }
+
+    input, button {
+      background: #222;
+      color: #eee;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      padding: 0.5rem 0.6rem;
+    }
+    button:hover { background: #333; cursor: pointer; }
+
+    #output {
+      background: #000;
+      white-space: pre-wrap;
+      height: 22.5vh;
+      overflow-y: auto;
+      border-radius: 4px;
+    }
+
+    #output-wrapper {
+      margin-top: 1rem;
+      background: #1e1e1e;
+      padding: 0.5rem;
+      border-radius: 4px;
+    }
+
+    /* Contenedor de resultados de la prueba */
+    .test-container {
+      background: #1a1a1a; /* un poco más oscuro que output-wrapper */
+      padding: 0.5rem;
+      border-radius: 5px;
+      margin-top: 1rem;
+      margin-bottom: 1rem;
+      overflow-y: hidden;
+      font-family: monospace;
+      font-size: 0.75rem;
+      color: #eee;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    }
+
+    .results div { margin-bottom: 0.3rem; }
+    .results {
+      background: black;
+      border-radius: 5px;
+      padding: 0.5rem;
+      height: 22.5vh;
+      overflow-y: scroll;
+    }
+
+    /* Menú de navegación simplificado */
+    .nav-container { margin-bottom: 1rem; }
+    .nav-menu { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0; margin: 0; list-style: none; }
+    .nav-menu a {
+      display: inline-block;
+      padding: 0.4rem 0.7rem;
+      color: #eee;
+      background: #222;
+      border-radius: 4px;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+    .nav-menu a:hover { background: #444; }
+    .nav-menu a.active { background: #4caf50; }
+
+    /* Medición de tiempo */
+    #init-timer { background: #1e1e1e; padding: 0.5rem; border-radius: 4px; font-family: monospace; font-size: 0.6rem; min-height: 22.5vh;}
+    #timer-details div { color: #aaa; font-size: 0.75rem; margin: 2px 0; }
+    #init-timer h3 { margin-top: 0; }
+
+    /* Consola overlay inferior */
+    .console-overlay {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      max-height: 50px;
+      transition: max-height 0.3s ease;
+      background: #111;
+      box-shadow: 0 -2px 8px rgba(0,0,0,0.6);
+      overflow: hidden;
+      z-index: 9999;
+      font-family: monospace;
+      font-size: 0.75rem;
+    }
+    .console-overlay.expanded { max-height: 40vh; }
+
+    .console-toggle {
+      width: 100%;
+      background: #222;
+      color: #eee;
+      border: none;
+      padding: 0.4rem 0.6rem;
+      font-size: 0.75rem;
+      height: 50px;
+      border-radius: 8px 8px 0 0;
+    }
+    .console-toggle:hover { background: #333; }
+
+    .console-content {
+      padding: 0.75rem;
+      overflow-y: auto;
+      height: 35vh;
+    }
+    .console-content ul { list-style: none; margin: 0; padding: 0; }
+    .console-content li { margin-bottom: 2px; word-break: break-word; }
+
+    #log-clear-btn {
+      background: #b33;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      padding: 0.3rem 0.5rem;
+      font-size: 0.7rem;
+      float: right;
+      margin-bottom: 0.3rem;
+    }
+    #log-clear-btn:hover { background: #d44; }
+
+    @media(max-width:600px){
+      body { padding: 0.6rem; font-size: 0.8rem; }
+      #output { max-height: 120px; padding: 0.5rem; }
+      .console-content { max-height: 35vh; padding: 0.5rem; }
+      #log-clear-btn { width: 100%; float: none; margin-bottom: 0.2rem; }
+      .nav-menu { gap: 0.3rem; }
+    }
+  </style>
+</head>
+<body>
+
+<nav class="nav-container">
+  <ul class="nav-menu">
+    <li><a href="index.html" class="active">Inicio</a></li>
+    <li><a href="concurrency_test.html">Concurrencia</a></li>
+    <li><a href="load_test.html">Carga</a></li>
+  </ul>
+</nav>
+
+<div class="container">
+  <h1>Ejecutar PHP en Web Workers</h1>
+  <label for="php-path">Ruta del script PHP (VFS):</label><br><br>
+  <input type="text" id="php-path" value="/www/script.php" size="40"><br><br>
+  <button id="run-btn">Ejecutar</button>
+  <div id="output-wrapper">
+    <div id="output"></div>
+  </div>
+</div>
+
+<div id="init-timer">
+  <h3>⏱️ Tiempo de Inicialización</h3>
+  <div id="timer-status">Inicializando...</div>
+  <div id="timer-details"></div>
+</div>
+
+<!-- Consola overlay -->
+<div class="console-overlay" id="console-overlay">
+  <button class="console-toggle" id="console-toggle">🖥️ Consola de Logs</button>
+  <div class="console-content">
+    <button id="log-clear-btn">Limpiar</button>
+    <ul id="log-list"></ul>
+  </div>
+</div>
+
+<script>
+/* ====== Consola Overlay ====== */
+const consoleOverlay = document.getElementById('console-overlay');
+const consoleToggle = document.getElementById('console-toggle');
+consoleToggle.addEventListener('click', () => {
+  consoleOverlay.classList.toggle('expanded');
+});
+
+// Función para añadir logs a la consola overlay con formato
+function addLog(type, args){
+  const logList = document.getElementById("log-list");
+  if(!logList) return;
+
+  const li = document.createElement("li");
+  const time = new Date().toLocaleTimeString();
+
+  // Construir mensaje
+  let msg = args.map(a => {
+    if(typeof a === 'object') {
+      return `<pre>${JSON.stringify(a, null, 2)}</pre>`;
+    }
+    return a.toString().replace(/\n/g,'<br>');
+  }).join(' ');
+
+  li.innerHTML = `[${time}] [${type.toUpperCase()}] ${msg}`;
+
+  // Colores según tipo
+  switch(type){
+    case 'error': li.style.color = '#f66'; break;
+    case 'warn': li.style.color = '#ff6'; break;
+    case 'info': li.style.color = '#4ac'; break;
+    case 'debug': li.style.color = '#aaa'; break;
+    default: li.style.color = '#eee';
+  }
+
+  logList.appendChild(li);
+  logList.scrollTop = logList.scrollHeight;
+}
+
+// Botón limpiar logs
+document.getElementById("log-clear-btn").addEventListener("click", () => {
+  document.getElementById("log-list").innerHTML="";
+});
+
+// Función global para logging desde cualquier parte del código
+function logToConsole(message, type='log'){
+  addLog(type, [message]);
+  if(window.__originalConsole && window.__originalConsole.log){
+    window.__originalConsole.log(`[LOG] ${message}`);
+  }
+}
+
+// Guardamos la consola original con bind para mantener contexto
+window.__originalConsole = {};
+["log","warn","error","info","debug"].forEach(m=>{
+  window.__originalConsole[m] = console[m].bind(console);
+});
+
+// Redefinimos console para capturar todos los logs futuros
+["log","warn","error","info","debug"].forEach(m=>{
+  console[m] = (...args)=>{
+    addLog(m,args);
+    window.__originalConsole[m](...args);
+  };
+});
+
+// Redefinición de Worker para capturar mensajes
+const OriginalWorker = window.Worker;
+window.Worker = function(...args){
+  const w = new OriginalWorker(...args);
+  w.addEventListener('message', e=>{
+    if(e.data){
+      const msg = e.data.data ?? JSON.stringify(e.data, null, 2);
+      addLog('log',[msg]);
+    }
+  });
+  return w;
+};
+</script>
+
+
+
+
+<script>
+  // Ejecutar script PHP
+  const runBtn = document.getElementById('run-btn');
+  const phpPathInput = document.getElementById('php-path');
+  const outputDiv = document.getElementById('output');
+  runBtn.addEventListener('click', async () => {
+    const path = phpPathInput.value.trim();
+    if(!path) return;
+    outputDiv.textContent = 'Ejecutando...';
+    try {
+      const result = await window.php.run(path);
+      outputDiv.textContent = result;
+    } catch(err){
+      outputDiv.textContent = 'Error: '+err;
+    }
+  });
+
+  // Temporizador
+  const initStartTime = performance.now();
+  let pageLoadTime=0, phpWasmReadyTime=0, workersReadyTime=0;
+  const timerStatus = document.getElementById('timer-status');
+  const timerDetails = document.getElementById('timer-details');
+
+  function updateTimerStatus(msg,isComplete=false){
+    const elapsed = ((performance.now()-initStartTime)/1000).toFixed(2);
+    timerStatus.innerHTML = `${msg} <span style="color:#666">(${elapsed}s)</span>`;
+    if(isComplete){ timerStatus.style.color='#28a745'; timerStatus.innerHTML+= ' ✅'; }
+  }
+  function addTimerDetail(msg){
+    const elapsed = ((performance.now()-initStartTime)/1000).toFixed(2);
+    timerDetails.innerHTML += `<div>${elapsed}s: ${msg}</div>`;
+  }
+
+  window.addEventListener('load',()=>{ pageLoadTime = performance.now(); addTimerDetail('Página cargada'); });
+  document.addEventListener('php-wasm-ready', ()=>{
+    phpWasmReadyTime=performance.now();
+    const phpInitDuration = ((phpWasmReadyTime-pageLoadTime)/1000).toFixed(2);
+    updateTimerStatus(`PHP WASM listo`,true);
+    addTimerDetail(`✅ PHP WASM inicializado (${phpInitDuration}s después de carga de página)`);
+    setTimeout(()=>{
+      if(window.php && window.php.run){
+        workersReadyTime = performance.now();
+        const workersDuration = ((workersReadyTime-phpWasmReadyTime)/1000).toFixed(2);
+        addTimerDetail(`✅ Workers listos (${workersDuration}s después de PHP WASM)`);
+      }
+    },100);
+  });
+
+  let progressInterval = setInterval(()=>{
+    if(window.php && window.php.run){
+      clearInterval(progressInterval);
+      if(!phpWasmReadyTime) updateTimerStatus(`PHP WASM listo`,true);
+    } else {
+      updateTimerStatus(`Esperando PHP WASM...`);
+    }
+  },100);
+</script>
+</body>
+</html>

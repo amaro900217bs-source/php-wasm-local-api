@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prueba de Carga PHP-WASM</title>
+  <script>
+    window.DEBUG = true;
+    window.ENTRY_POINT = "";
+    window.DOC_ROOT = "/www";
+    window.NUM_WORKERS = 2;
+    window.WARM_UP_SCRIPT = `<?php
+  // Warm-up básico que no requiere archivos externos
+  echo "PHP WASM Worker inicializado\n";
+  
+  // Funciones básicas de PHP
+  $test = "warmup";
+  echo "String: $test, Length: " . strlen($test) . "\n";
+  
+  // Operaciones matemáticas básicas
+  $result = sqrt(16) + pow(2, 3);
+  echo "Math test: $result\n";
+  
+  // Arrays y funciones básicas
+  $arr = range(1, 5);
+  echo "Array: " . implode(', ', $arr) . "\n";
+  
+  echo "✅ Warm-up completado\n";
+?>`;
+  </script>
+  <script type="module" src="./wasm_module.js" defer></script>
+  <style>
+    /* Tema oscuro general */
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #121212;
+      color: #eee;
+      font-size: 0.75rem;
+      line-height: 1.5;
+      padding: 1rem;
+      min-height: 150vh;
+    }
+    input, button { font-size: 0.85rem; }
+    input { max-width: 80vw; }
+    h1, h3 { margin: 0.6rem 0; }
+    .container { margin-bottom: 1rem; }
+
+    input, button {
+      background: #222;
+      color: #eee;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      padding: 0.5rem 0.6rem;
+    }
+    button:hover { background: #333; cursor: pointer; }
+
+    #output {
+      background: #000;
+      white-space: pre-wrap;
+      height: 22.5vh;
+      overflow-y: auto;
+      border-radius: 4px;
+    }
+
+    #output-wrapper {
+      margin-top: 1rem;
+      background: #1e1e1e;
+      padding: 0.5rem;
+      border-radius: 4px;
+    }
+
+    /* Contenedor de resultados de la prueba */
+    .test-container {
+      background: #1a1a1a; /* un poco más oscuro que output-wrapper */
+      padding: 0.5rem;
+      border-radius: 5px;
+      margin-top: 1rem;
+      margin-bottom: 1rem;
+      overflow-y: hidden;
+      font-family: monospace;
+      font-size: 0.75rem;
+      color: #eee;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    }
+
+    .results div { margin-bottom: 0.3rem; }
+    .results {
+      background: black;
+      border-radius: 5px;
+      padding: 0.5rem;
+      height: 22.5vh;
+      overflow-y: scroll;
+    }
+
+    /* Menú de navegación simplificado */
+    .nav-container { margin-bottom: 1rem; }
+    .nav-menu { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0; margin: 0; list-style: none; }
+    .nav-menu a {
+      display: inline-block;
+      padding: 0.4rem 0.7rem;
+      color: #eee;
+      background: #222;
+      border-radius: 4px;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+    .nav-menu a:hover { background: #444; }
+    .nav-menu a.active { background: #4caf50; }
+
+    /* Medición de tiempo */
+    #init-timer { background: #1e1e1e; padding: 0.5rem; border-radius: 4px; font-family: monospace; font-size: 0.6rem; min-height: 22.5vh;}
+    #timer-details div { color: #aaa; font-size: 0.75rem; margin: 2px 0; }
+    #init-timer h3 { margin-top: 0; }
+
+    /* Consola overlay inferior */
+    .console-overlay {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      max-height: 50px;
+      transition: max-height 0.3s ease;
+      background: #111;
+      box-shadow: 0 -2px 8px rgba(0,0,0,0.6);
+      overflow: hidden;
+      z-index: 9999;
+      font-family: monospace;
+      font-size: 0.75rem;
+    }
+    .console-overlay.expanded { max-height: 40vh; }
+
+    .console-toggle {
+      width: 100%;
+      background: #222;
+      color: #eee;
+      border: none;
+      padding: 0.4rem 0.6rem;
+      font-size: 0.75rem;
+      height: 50px;
+      border-radius: 8px 8px 0 0;
+    }
+    .console-toggle:hover { background: #333; }
+
+    .console-content {
+      padding: 0.75rem;
+      overflow-y: auto;
+      height: 35vh;
+    }
+    .console-content ul { list-style: none; margin: 0; padding: 0; }
+    .console-content li { margin-bottom: 2px; word-break: break-word; }
+
+    #log-clear-btn {
+      background: #b33;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      padding: 0.3rem 0.5rem;
+      font-size: 0.7rem;
+      float: right;
+      margin-bottom: 0.3rem;
+    }
+    #log-clear-btn:hover { background: #d44; }
+
+    @media(max-width:600px){
+      body { padding: 0.6rem; font-size: 0.8rem; }
+      #output { max-height: 120px; padding: 0.5rem; }
+      .console-content { max-height: 35vh; padding: 0.5rem; }
+      #log-clear-btn { width: 100%; float: none; margin-bottom: 0.2rem; }
+      .nav-menu { gap: 0.3rem; }
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <nav class="nav-container">
+    <ul class="nav-menu">
+      <li><a href="index.html">Inicio</a></li>
+      <li><a href="concurrency_test.html">Prueba de Concurrencia</a></li>
+      <li><a href="load_test.html" class="active">Prueba de Carga</a></li>
+    </ul>
+  </nav>
+  
+  <div class="container">
+    <h1>Prueba de Carga PHP-WASM</h1>
+  
+  <div class="control-panel">
+    <div>
+      <label for="total-requests">Total de solicitudes:</label>
+      <input type="number" id="total-requests" value="50" min="1" max="1000" style="width: 80px;"><br><br>
+      
+      <label for="concurrent-limit">Límite de concurrencia:</label>
+      <input type="number" id="concurrent-limit" value="5" min="1" max="20" style="width: 60px;">
+    </div>
+    
+    <div style="margin-top: 1rem;">
+      <input type="text" id="script-path" value="/www/script.php" size="30">
+      <br><br>
+      
+      <button id="run-test">Iniciar Prueba</button>
+      <button id="stop-test" disabled>Detener</button>
+      <button id="run-btn" hidden>Oculto</button>
+    </div>
+  </div>
+  
+  <div id="output-wrapper">
+    <div id="status" class="status info">
+      Inicializando PHP-WASM...
+    </div>
+  </div>
+  
+  <div id="output-wrapper">
+    <div class="stats">
+      <div class="progress">
+        <div class="progress-bar" id="overall-progress"></div>
+      </div>
+      <div id="stats-text">
+        Progreso: 0/0 (0.0%) | Completadas: 0 | Fallidas: 0 | Tiempo: 0.0s | Promedio: 0.0ms/req
+      </div>
+    </div>
+    
+    <div class="chart-container">
+      <canvas id="response-time-chart"></canvas>
+    </div>
+  </div>
+  
+  <div class="test-container">
+    <div id="results" class="results"></div>
+  </div>
+  
+  <!-- Script de medición de tiempo de inicialización -->
+  <div id="init-timer">
+      <h3>⏱️ Medición de Tiempo de Inicialización</h3>
+      <div id="timer-status">Inicializando...</div>
+      <div id="timer-details" style="margin-top: 0.3rem;"></div>
+    </div>
+
+    <div class="console-overlay" id="console-overlay">
+  <button class="console-toggle" id="console-toggle">🖥️ Consola de Logs</button>
+  <div class="console-content">
+    <button id="log-clear-btn">Limpiar</button>
+    <ul id="log-list"></ul>
+  </div>
+</div>
+<script>
+/* ====== Consola Overlay ====== */
+// Toggle consola
+const consoleOverlay = document.getElementById('console-overlay');
+const consoleToggle = document.getElementById('console-toggle');
+consoleToggle.addEventListener('click', () => {
+  consoleOverlay.classList.toggle('expanded');
+});
+
+// Función para añadir logs a la consola overlay
+function addLog(type, args){
+  const logList = document.getElementById("log-list");
+  if(!logList) return;
+  const li = document.createElement("li");
+  const time = new Date().toLocaleTimeString();
+  li.textContent = `[${time}] [${type.toUpperCase()}] ${args.join(' ')}`;
+  li.style.color = type==='error'?'#f66':type==='warn'?'#ff6':'#eee';
+  logList.appendChild(li);
+  logList.scrollTop = logList.scrollHeight;
+}
+
+// Botón limpiar logs
+document.getElementById("log-clear-btn").addEventListener("click", () => {
+  document.getElementById("log-list").innerHTML="";
+});
+
+// Función global para logging desde cualquier parte del código
+function logToConsole(message, type='log'){
+  addLog(type, [message]);
+  if(window.__originalConsole){
+    window.__originalConsole.log(`[LOG] ${message}`);
+  }
+}
+
+// Guardamos la consola original
+window.__originalConsole = {...console};
+
+// Redefinimos console para capturar todos los logs futuros
+["log","warn","error","info","debug"].forEach(m=>{
+  console[m] = (...args)=>{
+    addLog(m,args);
+    window.__originalConsole[m](...args);
+  };
+});
+
+// Redefinición de Worker para capturar mensajes
+const OriginalWorker = window.Worker;
+window.Worker = function(...args){
+  const w = new OriginalWorker(...args);
+  w.addEventListener('message', e=>{
+    if(e.data){
+      const msg = e.data.data ?? JSON.stringify(e.data);
+      addLog('log',[msg]);
+    }
+  });
+  return w;
+};
+</script>
+
+  <!-- Configuración PHP-WASM -->
+  <script>
+    
+    // Estado de la aplicación
+    const appState = {
+      phpReady: false,
+      testInProgress: false,
+      testRunning: false,
+      testStartTime: 0,
+      completedRequests: 0,
+      failedRequests: 0,
+      totalRequests: 0,
+      responseTimes: [],
+      testTimeout: null,
+      currentBatch: 0,
+      concurrencyLimit: 5
+    };
+    
+    // Configurar manejadores de eventos
+    document.addEventListener('DOMContentLoaded', () => {
+      // Inicializar UI
+      initUI();
+      
+      // Función para marcar PHP-WASM como listo
+      const markAsReady = () => {
+        if (appState.phpReady) return; // Evitar múltiples inicializaciones
+        
+        appState.phpReady = true;
+        updateStatus('PHP-WASM está listo. Puede iniciar la prueba.');
+        document.getElementById('run-test').disabled = false;
+        console.log('PHP-WASM marcado como listo');
+      };
+      
+      // Escuchar evento de inicialización de PHP-WASM
+      document.addEventListener('php-wasm-ready', markAsReady);
+      
+      // Verificar si PHP-WASM ya está listo
+      if (window.php && window.php.run) {
+        console.log('PHP-WASM ya está disponible');
+        markAsReady();
+      }
+    });
+    
+    // Inicializar elementos de la interfaz
+    function initUI() {
+      const runBtn = document.getElementById('run-test');
+      const stopBtn = document.getElementById('stop-test');
+      
+      if (runBtn && stopBtn) {
+        runBtn.addEventListener('click', runLoadTest);
+        stopBtn.addEventListener('click', stopTest);
+      }
+      
+      // Limpieza al cerrar la página
+      window.addEventListener('beforeunload', () => {
+        if (appState.testInProgress) {
+          stopTest();
+        }
+      });
+    }
+  </script>  
+  <script>
+    // Variables de estado
+    let testInProgress = false;
+    let phpReady = false;
+    let completedRequests = 0;
+    let failedRequests = 0;
+    let totalRequests = 0;
+    let startTime = 0;
+    let responseTimes = [];
+    let responseTimeChart = null;  // Variable para almacenar la instancia del gráfico
+    
+    // Elementos de la interfaz
+    const runBtn = document.getElementById('run-test');
+    const stopBtn = document.getElementById('stop-test');
+    const statusEl = document.getElementById('status');
+    const resultsEl = document.getElementById('results');
+    const statsText = document.getElementById('stats-text');
+    const progressBar = document.getElementById('overall-progress');
+    
+    // Inicializar gráfico
+    function initChart() {
+      const ctx = document.getElementById('response-time-chart').getContext('2d');
+      responseTimeChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [{
+            label: 'Tiempo de respuesta (ms)',
+            data: [],
+            borderColor: 'rgb(75, 192, 192)',
+            tension: 0.1,
+            borderWidth: 2,
+            pointRadius: 3,
+            pointHoverRadius: 5
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: {
+            duration: 0
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: {
+                display: true,
+                text: 'Tiempo (ms)'
+              }
+            },
+            x: {
+              display: false
+            }
+          },
+          plugins: {
+            legend: {
+              display: false
+            }
+          }
+        }
+      });
+    }
+    
+    // Actualizar estado
+    function updateStatus(message, isError = false) {
+      statusEl.textContent = message;
+      statusEl.className = `status ${isError ? 'error' : 'info'}`;
+      console.log(`[STATUS] ${message}`);
+    }
+    
+    // Actualizar estadísticas
+    function updateStats() {
+      const progressBar = document.querySelector('.progress-bar');
+      const statsText = document.getElementById('stats-text');
+      const totalProcessed = appState.completedRequests + appState.failedRequests;
+      const progress = (totalProcessed / appState.totalRequests) * 100;
+      const elapsedTime = (Date.now() - appState.testStartTime) / 1000;
+      const avgTime = appState.responseTimes.length > 0 
+        ? (appState.responseTimes.reduce((a, b) => a + b, 0) / appState.responseTimes.length).toFixed(2)
+        : 0;
+      
+      if (progressBar) {
+        progressBar.style.width = `${progress}%`;
+      }
+      
+      if (statsText) {
+        statsText.textContent = 
+          `Progreso: ${totalProcessed}/${appState.totalRequests} (${progress.toFixed(1)}%) | ` +
+          `Completadas: ${appState.completedRequests} | Fallidas: ${appState.failedRequests} | ` +
+          `Tiempo: ${elapsedTime.toFixed(1)}s | Promedio: ${avgTime}ms/req`;
+      }
+    }
+    
+    // Agregar punto al gráfico
+    function addDataPoint(responseTime) {
+      if (!responseTimeChart) {
+        console.warn('El gráfico no está inicializado');
+        return;
+      }
+      
+      try {
+        const labels = responseTimeChart.data.labels || [];
+        const data = responseTimeChart.data.datasets[0].data || [];
+        
+        // Agregar nuevo punto de datos
+        labels.push((labels.length + 1).toString());
+        data.push(responseTime);
+        
+        // Mantener un número manejable de puntos en el gráfico
+        const maxPoints = 100;
+        if (data.length > maxPoints) {
+          labels.shift();
+          data.shift();
+        }
+        
+        // Actualizar el gráfico
+        responseTimeChart.update('none'); // 'none' para mejor rendimiento
+      } catch (error) {
+        console.error('Error al actualizar el gráfico:', error);
+      }
+    }
+    
+    // Ejecutar una solicitud individual
+    async function executeRequest(requestNumber) {
+      const startTime = performance.now();
+      let success = false;
+      
+      try {
+        // Obtener la ruta del script del input
+        const scriptPath = document.getElementById('script-path').value || 'benchmark.php';
+        
+        // Validar que el script existe en el sistema de archivos virtual
+        if (!scriptPath.endsWith('.php')) {
+          throw new Error('La ruta del script debe terminar en .php');
+        }
+        
+        console.log(`[${requestNumber}] Ejecutando script: ${scriptPath}`);
+        
+        // Ejecutar el script PHP
+        const result = await window.php.run(scriptPath);
+        const endTime = performance.now();
+        const duration = Math.round(endTime - startTime);
+        
+        // Actualizar estadísticas
+        appState.completedRequests++;
+        appState.responseTimes.push(duration);
+        
+        // Registrar resultado
+        logMessage(`[${requestNumber}] ${scriptPath} completado en ${duration}ms`);
+        
+        // Actualizar gráfico con el nuevo punto de datos
+        addDataPoint(duration);
+        
+        success = true;
+        return { success: true, duration };
+      } catch (error) {
+        const endTime = performance.now();
+        const duration = Math.round(endTime - startTime);
+        
+        // Actualizar estadísticas de error
+        appState.failedRequests++;
+        
+        // Registrar error
+        console.error(`[${requestNumber}] Error:`, error);
+        logMessage(`[${requestNumber}] Error después de ${duration}ms: ${error.message}`, true);
+        
+        return { success: false, error, duration };
+      } finally {
+        // Actualizar estadísticas independientemente del resultado
+        updateStats();
+      }
+    }
+    
+    // Agregar mensaje a resultados
+    function logMessage(message, isError = false) {
+      resultsEl.textContent += `${message}\n`;
+      resultsEl.scrollTop = resultsEl.scrollHeight;
+    }
+    
+    // Procesar un lote de solicitudes
+    async function processBatch(batchStart, batchEnd) {
+      console.log(`processBatch(${batchStart}, ${batchEnd})`);
+      
+      // Verificar si la prueba fue detenida
+      if (!appState.testInProgress) {
+        console.log('Prueba detenida durante el procesamiento del lote');
+        return;
+      }
+      
+      const batchSize = Math.min(batchEnd - batchStart, appState.totalRequests - batchStart);
+      console.log(`Procesando lote ${batchStart + 1}-${batchStart + batchSize} de ${appState.totalRequests}`);
+      updateStatus(`Procesando lote ${Math.floor(batchStart / appState.concurrency) + 1}/${Math.ceil(appState.totalRequests / appState.concurrency)}`);
+      
+      // Crear un array de promesas para este lote
+      const batchPromises = [];
+      const requestIndices = [];
+      
+      for (let i = 0; i < batchSize; i++) {
+        const requestIndex = batchStart + i;
+        if (requestIndex >= appState.totalRequests) break;
+        
+        requestIndices.push(requestIndex);
+        batchPromises.push(
+          executeRequest(requestIndex + 1)
+            .catch(error => {
+              console.error(`Error en solicitud ${requestIndex + 1}:`, error);
+              return { success: false, error };
+            })
+        );
+      }
+      
+      try {
+        console.log(`Esperando a que se completen ${batchPromises.length} solicitudes...`);
+        
+        // Esperar a que todas las solicitudes del lote actual terminen
+        const results = await Promise.all(batchPromises);
+        
+        // Verificar si la prueba fue detenida durante la espera
+        if (!appState.testInProgress) {
+          console.log('Prueba detenida durante la ejecución del lote');
+          return;
+        }
+        
+        // Actualizar estadísticas
+        const successfulRequests = results.filter(r => r && r.success).length;
+        console.log(`Lote completado: ${successfulRequests}/${batchPromises.length} exitosas`);
+        
+        // Verificar si hay más lotes por procesar
+        const nextBatchStart = batchEnd;
+        if (nextBatchStart < appState.totalRequests) {
+          const nextBatchEnd = Math.min(nextBatchStart + appState.concurrency, appState.totalRequests);
+          
+          // Usar setTimeout para permitir que el navegador actualice la UI
+          console.log(`Programando siguiente lote: ${nextBatchStart}-${nextBatchEnd}`);
+          setTimeout(() => {
+            if (appState.testInProgress) {
+              processBatch(nextBatchStart, nextBatchEnd);
+            }
+          }, 0);
+        } else {
+          // Si no hay más lotes, finalizar la prueba
+          console.log('Todos los lotes completados, llamando a testComplete');
+          testComplete();
+          // Último lote completado
+          console.log('Todos los lotes completados');
+          if (appState.testInProgress) {
+            appState.testRunning = false;
+            testComplete();
+          }
+        }
+      } catch (error) {
+        console.error('Error en processBatch:', error);
+        if (appState.testInProgress) {
+          updateStatus(`Error en la prueba: ${error.message}`, true);
+          stopTest();
+        }
+      }
+    }
+    
+    // Ejecutar prueba de carga
+    async function runLoadTest() {
+      if (appState.testInProgress) {
+        console.log('Ya hay una prueba en curso');
+        return;
+      }
+      
+      try {
+        // Obtener y validar la ruta del script
+        const scriptPath = document.getElementById('script-path').value || 'benchmark.php';
+        if (!scriptPath.endsWith('.php')) {
+          throw new Error('La ruta del script debe terminar en .php');
+        }
+        
+        console.log(`Iniciando prueba con script: ${scriptPath}`);
+        
+        // Resetear estado
+        appState.testStartTime = Date.now();
+        appState.completedRequests = 0;
+        appState.failedRequests = 0;
+        appState.responseTimes = [];
+        appState.testInProgress = true;
+        appState.testRunning = true;
+        appState.scriptPath = scriptPath;  // Guardar la ruta del script
+        
+        // Obtener parámetros de la UI
+        appState.totalRequests = parseInt(document.getElementById('total-requests').value) || 10;
+        appState.concurrency = parseInt(document.getElementById('concurrent-limit').value) || 5;
+        
+        // Validar parámetros
+        if (appState.totalRequests <= 0) {
+          throw new Error('El número total de solicitudes debe ser mayor que 0');
+        }
+        
+        if (appState.concurrency <= 0) {
+          throw new Error('El nivel de concurrencia debe ser mayor que 0');
+        }
+        
+        // Limpiar resultados anteriores
+        resultsEl.textContent = '';
+        updateStats();
+        
+        // Actualizar UI
+        document.getElementById('run-test').disabled = true;
+        document.getElementById('stop-test').disabled = false;
+        updateStatus(`Iniciando prueba de ${scriptPath} (${appState.totalRequests} solicitudes, ${appState.concurrency} concurrentes)`);
+        
+        // Iniciar el primer lote
+        const firstBatchSize = Math.min(appState.concurrency, appState.totalRequests);
+        console.log(`Iniciando prueba con ${firstBatchSize} solicitudes concurrentes`);
+        
+        // Iniciar el procesamiento por lotes
+        console.log('Iniciando procesamiento por lotes...');
+        await processBatch(0, appState.concurrencyLimit, scriptPath);
+        
+      } catch (error) {
+        console.error('Error en runLoadTest:', error);
+        updateStatus(`Error: ${error.message}`, true);
+        stopTest();
+      }  
+    }
+    
+    // Finalizar la prueba
+    function testComplete() {
+      console.log('Iniciando testComplete...');
+      
+      if (!appState.testRunning) {
+        console.log('testComplete: La prueba no está en ejecución');
+        return;
+      }
+      
+      try {
+        // Calcular estadísticas finales
+        const totalTime = (Date.now() - appState.testStartTime) / 1000;
+        const totalRequests = appState.completedRequests + appState.failedRequests;
+        const successRate = totalRequests > 0 ? (appState.completedRequests / totalRequests) * 100 : 0;
+        const avgResponseTime = appState.responseTimes.length > 0 
+          ? Math.round(appState.responseTimes.reduce((a, b) => a + b, 0) / appState.responseTimes.length) 
+          : 0;
+        
+        console.log('Estadísticas calculadas:', {
+          totalTime,
+          totalRequests,
+          completed: appState.completedRequests,
+          failed: appState.failedRequests,
+          successRate,
+          avgResponseTime
+        });
+        
+        // Mostrar resumen
+        logMessage('\n=== RESUMEN DE LA PRUEBA ===');
+        logMessage(`Tiempo total: ${totalTime.toFixed(2)} segundos`);
+        logMessage(`Solicitudes totales: ${totalRequests}`);
+        logMessage(`Completadas: ${appState.completedRequests}`);
+        logMessage(`Fallidas: ${appState.failedRequests}`);
+        logMessage(`Tasa de éxito: ${successRate.toFixed(2)}%`);
+        logMessage(`Tiempo promedio de respuesta: ${avgResponseTime}ms`);
+        
+        // Actualizar UI
+        updateStatus('Prueba completada exitosamente');
+        document.getElementById('run-test').disabled = false;
+        document.getElementById('stop-test').disabled = true;
+        
+        console.log('UI actualizada correctamente');
+      } catch (error) {
+        console.error('Error en testComplete:', error);
+        updateStatus('Error al finalizar la prueba', true);
+      } finally {
+        // Asegurarse de que el estado se limpie
+        appState.testInProgress = false;
+        appState.testRunning = false;
+        console.log('Estado de la prueba reiniciado');
+      }
+      
+      console.log('testComplete finalizado');
+    }
+    
+    // Detener la prueba manualmente
+    function stopTest() {
+      if (!appState.testInProgress) {
+        console.log('No hay pruebas en curso para detener');
+        return;
+      }
+      
+      console.log('Deteniendo prueba...');
+      
+      // Actualizar estado
+      appState.testInProgress = false;
+      appState.testRunning = false;
+      
+      // Limpiar recursos
+      cleanupTest();
+      
+      // Mostrar estadísticas parciales
+      const totalProcessed = appState.completedRequests + appState.failedRequests;
+      if (totalProcessed > 0) {
+        logMessage('\n--- Prueba detenida por el usuario ---');
+        logMessage(`Solicitudes procesadas: ${totalProcessed}/${appState.totalRequests}`);
+        logMessage(`Completadas: ${appState.completedRequests} | Fallidas: ${appState.failedRequests}`);
+      }
+      
+      // Actualizar UI
+      updateStatus('Prueba detenida por el usuario');
+      document.getElementById('run-test').disabled = false;
+      document.getElementById('stop-test').disabled = true;
+      
+      console.log('Prueba detenida correctamente');
+    }
+    
+    // Limpieza de recursos
+    function cleanupTest() {
+      appState.testRunning = false;
+      appState.testInProgress = false;
+      clearTimeout(appState.testTimeout);
+      
+      // Actualizar controles
+      document.getElementById('run-test').disabled = false;
+      document.getElementById('stop-test').disabled = true;
+    }
+    
+    // Inicializar eventos
+    document.addEventListener('DOMContentLoaded', () => {
+      // Inicializar gráfico y controles
+      initChart();
+      
+      // Configurar manejadores de eventos
+      const runBtn = document.getElementById('run-test');
+      const stopBtn = document.getElementById('stop-test');
+      
+      if (runBtn && stopBtn) {
+        runBtn.addEventListener('click', runLoadTest);
+        stopBtn.addEventListener('click', stopTest);
+      }
+      
+      // Limpieza al cerrar la página
+      window.addEventListener('beforeunload', () => {
+        if (testRunning) {
+          stopTest();
+        }
+      });
+    });
+  </script>
+  
+  <!-- Script de medición de tiempo -->
+  <script>
+    // Variables de medición
+    const initStartTime = performance.now();
+    let pageLoadTime = 0;
+    let phpWasmReadyTime = 0;
+    let workersReadyTime = 0;
+    
+    // Elementos de la UI
+    const timerStatus = document.getElementById('timer-status');
+    const timerDetails = document.getElementById('timer-details');
+    
+    // Función para actualizar el estado
+    function updateTimerStatus(message, isComplete = false) {
+      const elapsed = ((performance.now() - initStartTime) / 1000).toFixed(2);
+      timerStatus.innerHTML = `${message} <span style="color: #666;">(${elapsed}s)</span>`;
+      
+      if (isComplete) {
+        timerStatus.style.color = '#28a745';
+        timerStatus.innerHTML += ' ✅';
+      }
+    }
+    
+    // Función para agregar detalles
+    function addTimerDetail(message) {
+      const elapsed = ((performance.now() - initStartTime) / 1000).toFixed(2);
+      timerDetails.innerHTML += `<div>${elapsed}s: ${message}</div>`;
+    }
+    
+    // Medir tiempo de carga de página
+    window.addEventListener('load', () => {
+      pageLoadTime = performance.now();
+      addTimerDetail('Página cargada completamente');
+    });
+    
+    // Medir tiempo de PHP WASM listo
+    document.addEventListener('php-wasm-ready', () => {
+      phpWasmReadyTime = performance.now();
+      const totalTime = ((phpWasmReadyTime - initStartTime) / 1000).toFixed(2);
+      const pageLoadDuration = ((pageLoadTime - initStartTime) / 1000).toFixed(2);
+      const phpInitDuration = ((phpWasmReadyTime - pageLoadTime) / 1000).toFixed(2);
+      
+      updateTimerStatus(`PHP WASM listo en ${totalTime}s total`, true);
+      addTimerDetail(`✅ PHP WASM inicializado (${phpInitDuration}s después de carga de página)`);
+      
+      // Verificar estado de workers
+      setTimeout(() => {
+        if (window.php && window.php.run) {
+          workersReadyTime = performance.now();
+          const workersDuration = ((workersReadyTime - phpWasmReadyTime) / 1000).toFixed(2);
+          addTimerDetail(`✅ Workers listos (${workersDuration}s después de PHP WASM)`);
+          
+          // Resumen final
+          const finalTime = ((workersReadyTime - initStartTime) / 1000).toFixed(2);
+          addTimerDetail(`🎯 <strong>TOTAL: ${finalTime}s desde inicio hasta sistema completamente funcional</strong>`);
+        }
+      }, 100);
+    });
+    
+    // Mostrar progreso en tiempo real
+    let progressInterval = setInterval(() => {
+      if (window.php && window.php.run) {
+        clearInterval(progressInterval);
+        const elapsed = ((performance.now() - initStartTime) / 1000).toFixed(2);
+        if (!phpWasmReadyTime) {
+          updateTimerStatus(`PHP WASM listo en ${elapsed}s`, true);
+        }
+      } else {
+        const elapsed = ((performance.now() - initStartTime) / 1000).toFixed(2);
+        updateTimerStatus(`Esperando PHP WASM... (${elapsed}s)`, false);
+      }
+    }, 100);
+  </script>
+</body>
+</html>
